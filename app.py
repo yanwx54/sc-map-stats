@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import os, io
+import os
 from datetime import datetime
 import scraper
 
@@ -107,9 +107,9 @@ season = scraper.load_season()
 all_map_names = [m["english"] for m in season["maps"]]
 
 with st.sidebar:
-    lang = st.selectbox(LANG["中文"]["lang"], ["中文", "EN"])
-    st.markdown(f"#### {LANG[lang]['filter']}")
-    selected = st.multiselect("选择要显示的地图", all_map_names, default=all_map_names)
+    lang = st.selectbox(LANG["中文"]["lang"], ["中文", "EN"], key="lang_sel")
+    st.markdown(f"#### {LANG['中文']['filter']}")
+    selected = st.multiselect("选择要显示的地图", all_map_names, default=all_map_names, key="map_pool")
 
 T = LANG[lang]
 season_maps = [m for m in season["maps"] if m["english"] in selected]
@@ -129,24 +129,19 @@ else:
                 f'<p>{T["source"]} {datetime.now().strftime("%Y-%m-%d %H:%M")} · {season["season_name"]}</p></div></div>',
                 unsafe_allow_html=True)
 
-if st.button(T["refresh"], type="primary"):
-    scrape_cached.clear()
-    st.rerun()
-
 # ============================================================
-# 数据获取（缓存 + 状态预警）
+# 数据获取函数（必须先定义，按钮才能调用）
 # ============================================================
-
-
 @st.cache_data(ttl=3600, show_spinner=False)
 def scrape_cached():
     return scraper.scrape(retries=3)
 
-if st.button(T["refresh"], type="primary"):
+# 刷新按钮（只此一处，带唯一 key）
+if st.button(T["refresh"], type="primary", key="refresh_btn"):
     scrape_cached.clear()
     st.rerun()
 
-maps_data, status = scrape_cached()      # 这行及后面的 if status 判断保持不动
+maps_data, status = scrape_cached()
 
 if status == "network":
     st.error("❌ 无法连接 eloboard（网络或反爬限制）。请稍后点击刷新重试。")
@@ -185,7 +180,7 @@ for name, d in maps_data.items():
     export_rows.append({"地图": name, "场次": d["total_games"],
                         "Z胜率": d["zerg"]["winrate"], "P胜率": d["protoss"]["winrate"], "T胜率": d["terran"]["winrate"]})
 csv = pd.DataFrame(export_rows).to_csv(index=False).encode("utf-8-sig")
-st.download_button(T["export"], csv, "sc_map_stats.csv", "text/csv")
+st.download_button(T["export"], csv, "sc_map_stats.csv", "text/csv", key="export_csv")
 
 # ============================================================
 # Tabs
@@ -228,7 +223,7 @@ with tab1:
                                 f'<span class="mu-wr {wr_cls(d["winrate"])}">{d["winrate"]:.1f}%</span>' \
                                 f'<span class="mu-wl">{d["wins"]:,}-{d["losses"]:,}</span></div>'
                 body += '</div>'
-            # 雷达图
+            st.markdown(f'<div class="sc-card">{head}{body}</div>', unsafe_allow_html=True)
             fig = go.Figure()
             fig.add_trace(go.Scatterpolar(
                 r=[z["winrate"], p["winrate"], t["winrate"], z["winrate"]],
@@ -236,13 +231,12 @@ with tab1:
                 line_color="#60a5fa", fillcolor="rgba(96,165,250,0.25)"))
             fig.add_trace(go.Scatterpolar(
                 r=[50, 50, 50, 50], theta=["Zerg", "Protoss", "Terran", "Zerg"],
-                line=dict(color="#64748b", dash="dash"), name="50% 平衡线"))
+                line=dict(color="#64748b", dash="dash"), name="50%"))
             fig.update_layout(polar=dict(radialaxis=dict(range=[30, 70], gridcolor="#334155"),
                                          bgcolor="rgba(0,0,0,0)"),
                               paper_bgcolor="rgba(0,0,0,0)", height=300, margin=dict(l=40, r=40, t=20, b=20),
                               showlegend=False)
-            st.markdown(f'<div class="sc-card">{head}{body}</div>', unsafe_allow_html=True)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key=f"radar_{mi['english']}")
         else:
             head += '<span class="bal-badge bal-nodata">暂无数据</span></div>'
             st.markdown(f'<div class="sc-card">{head}<div style="color:#94a3b8;text-align:center;padding:1rem;">⚠️ 该地图尚未被 eloboard 收录</div></div>',
@@ -281,7 +275,7 @@ with tab2:
         fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                           margin=dict(l=10, r=10, t=10, b=10), xaxis=dict(range=[35, 65], gridcolor="#1e293b"),
                           yaxis=dict(autorange="reversed", gridcolor="#1e293b"), height=340)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="matchup_bar")
 
 # ---- Tab3 全部地图（热力图）----
 with tab3:
@@ -299,7 +293,6 @@ with tab3:
                 f'<td><span class="dot {bcls}"></span>{btxt}</td></tr>'
     html += '</tbody></table></div>'
     st.markdown(html, unsafe_allow_html=True)
-    # 热力图
     if allrows:
         names = [n for n, _ in allrows]
         zmat = [[d["zerg"]["winrate"], d["protoss"]["winrate"], d["terran"]["winrate"]] for _, d in allrows]
@@ -308,12 +301,12 @@ with tab3:
                                    text=[[f"{v:.1f}%" for v in row] for row in zmat], texttemplate="%{text}"))
         fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                           margin=dict(l=10, r=10, t=10, b=10), yaxis=dict(autorange="reversed"), height=420)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="heatmap")
 
 # ---- Tab4 地图对比 ----
 with tab4:
     opts = [m["english"] for m in season_maps]
-    pick = st.multiselect("选择 2~3 张地图对比", opts, default=opts[:2])
+    pick = st.multiselect("选择 2~3 张地图对比", opts, default=opts[:2] if len(opts) >= 2 else opts, key="cmp_pick")
     if len(pick) >= 2:
         cmp_rows = []
         for en in pick:
@@ -334,7 +327,7 @@ with tab4:
                     theta=["Zerg", "Protoss", "Terran", "Zerg"], fill="toself", name=r["地图"]))
             fig.update_layout(polar=dict(radialaxis=dict(range=[30, 70], gridcolor="#334155"), bgcolor="rgba(0,0,0,0)"),
                               paper_bgcolor="rgba(0,0,0,0)", height=420, margin=dict(l=40, r=40, t=20, b=20))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="cmp_radar")
     else:
         st.info("请至少选择 2 张地图进行对比")
 
@@ -345,7 +338,7 @@ with tab5:
         st.info("📈 历史数据由 GitHub Actions 每日自动采集。数据积累 2 天后即可在此查看胜率趋势。")
     else:
         en_opts = [m["english"] for m in season_maps]
-        pick = st.selectbox("选择地图查看趋势", en_opts)
+        pick = st.selectbox("选择地图查看趋势", en_opts, key="trend_pick")
         dates, zs, ps, ts = [], [], [], []
         for h in history:
             if pick in h["maps"]:
@@ -359,7 +352,7 @@ with tab5:
         fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                           yaxis=dict(range=[30, 70], gridcolor="#1e293b"), xaxis=dict(gridcolor="#1e293b"),
                           height=420, margin=dict(l=10, r=10, t=10, b=10))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="trend_line")
 
 st.markdown('<p style="text-align:center;color:#475569;margin-top:2rem;">⚔️ SC:BW Map Stats · Data from eloboard.com</p>',
             unsafe_allow_html=True)
