@@ -1,8 +1,11 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import os
+import os, io
 from datetime import datetime
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import scraper
 
 # ============================================================
@@ -136,7 +139,6 @@ else:
 def scrape_cached():
     return scraper.scrape(retries=3)
 
-# 刷新按钮（只此一处，带唯一 key）
 if st.button(T["refresh"], type="primary", key="refresh_btn"):
     scrape_cached.clear()
     st.rerun()
@@ -149,6 +151,55 @@ if status == "network":
 elif status == "structure":
     st.error("⚠️ 数据解析失败：eloboard 网页结构可能已改版，请联系维护者更新解析逻辑。")
     st.stop()
+
+# ============================================================
+# 导出图片辅助函数（英文标签，避免云端中文乱码）
+# ============================================================
+def _en_balance(sc):
+    if sc is None: return "N/A"
+    if sc >= 80: return "Balanced"
+    if sc >= 60: return "Fair"
+    if sc >= 40: return "Skewed"
+    return "Broken"
+
+def build_summary_image(maps_data, season_maps):
+    rows = []
+    for mi in season_maps:
+        _, md = scraper.find_map_data(mi, maps_data)
+        if md and md["total_games"] > 0:
+            z = md["zerg"]["winrate"]; p = md["protoss"]["winrate"]; t = md["terran"]["winrate"]
+            sc = scraper.balance_score(z, p, t, md["total_games"])
+            rows.append([mi["english"], f'{md["total_games"]:,}', f"{z:.1f}", f"{p:.1f}", f"{t:.1f}",
+                         f"{sc}" if sc is not None else "-", _en_balance(sc)])
+    if not rows:
+        return None
+    cols = ["Map", "Games", "Z%", "P%", "T%", "Score", "Balance"]
+    n = len(rows)
+    fig, ax = plt.subplots(figsize=(11, 0.55 * n + 1.6))
+    fig.patch.set_facecolor("#0f172a"); ax.set_facecolor("#0f172a"); ax.axis("off")
+    ax.set_title("SC:BW  ·  Season Map Stats", color="#f1f5f9", fontsize=20, fontweight="bold", pad=26)
+    ax.text(0.5, 1.03, f"Source: eloboard.com  |  {datetime.now().strftime('%Y-%m-%d')}",
+            transform=ax.transAxes, ha="center", color="#94a3b8", fontsize=10)
+    tbl = ax.table(cellText=rows, colLabels=cols, loc="center", cellLoc="center")
+    tbl.auto_set_font_size(False); tbl.set_fontsize(11); tbl.scale(1, 1.7)
+    for (r, c), cell in tbl.get_celld().items():
+        cell.set_edgecolor("#334155")
+        if r == 0:
+            cell.set_facecolor("#334155"); cell.get_text().set_color("#e2e8f0"); cell.get_text().set_fontweight("bold")
+        else:
+            cell.set_facecolor("#1e293b"); cell.get_text().set_color("#e2e8f0")
+            if c in (2, 3, 4):
+                try:
+                    v = float(rows[r - 1][c])
+                    cell.get_text().set_color("#4ade80" if v >= 50 else "#fb923c")
+                    cell.get_text().set_fontweight("bold")
+                except Exception:
+                    pass
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+    plt.close(fig)
+    buf.seek(0)
+    return buf.getvalue()
 
 # ============================================================
 # 顶部数据看板
@@ -174,13 +225,17 @@ c2.markdown(metric(T["season_games"], f"{season_games:,}", season["season_name"]
 c3.markdown(metric(T["best"], best[0] if best else "-", f"{T['score']} {best[1]}" if best else "", "high"), unsafe_allow_html=True)
 c4.markdown(metric(T["worst"], worst[0] if worst else "-", f"{T['score']} {worst[1]}" if worst else "", "low"), unsafe_allow_html=True)
 
-# 导出 CSV
+# 导出 CSV + 导出图片（两列并排）
 export_rows = []
 for name, d in maps_data.items():
     export_rows.append({"地图": name, "场次": d["total_games"],
                         "Z胜率": d["zerg"]["winrate"], "P胜率": d["protoss"]["winrate"], "T胜率": d["terran"]["winrate"]})
 csv = pd.DataFrame(export_rows).to_csv(index=False).encode("utf-8-sig")
-st.download_button(T["export"], csv, "sc_map_stats.csv", "text/csv", key="export_csv")
+ec1, ec2 = st.columns(2)
+ec1.download_button(T["export"], csv, "sc_map_stats.csv", "text/csv", key="export_csv")
+png_bytes = build_summary_image(maps_data, season_maps)
+if png_bytes:
+    ec2.download_button("🖼️ 导出为图片 (PNG)", png_bytes, "sc_map_stats.png", "image/png", key="export_png")
 
 # ============================================================
 # Tabs
@@ -191,7 +246,7 @@ RACE = {"zerg": ("Zerg", "zerg"), "protoss": ("Protoss", "protoss"), "terran": (
 
 def wr_cls(wr): return "high" if wr >= 50 else "low"
 
-# ---- Tab1 赛季详情 ----
+# ---- Tab1 赛季详情（已移除雷达图）----
 with tab1:
     for mi in season_maps:
         fn, md = scraper.find_map_data(mi, maps_data)
@@ -224,19 +279,6 @@ with tab1:
                                 f'<span class="mu-wl">{d["wins"]:,}-{d["losses"]:,}</span></div>'
                 body += '</div>'
             st.markdown(f'<div class="sc-card">{head}{body}</div>', unsafe_allow_html=True)
-            fig = go.Figure()
-            fig.add_trace(go.Scatterpolar(
-                r=[z["winrate"], p["winrate"], t["winrate"], z["winrate"]],
-                theta=["Zerg", "Protoss", "Terran", "Zerg"], fill="toself",
-                line_color="#60a5fa", fillcolor="rgba(96,165,250,0.25)"))
-            fig.add_trace(go.Scatterpolar(
-                r=[50, 50, 50, 50], theta=["Zerg", "Protoss", "Terran", "Zerg"],
-                line=dict(color="#64748b", dash="dash"), name="50%"))
-            fig.update_layout(polar=dict(radialaxis=dict(range=[30, 70], gridcolor="#334155"),
-                                         bgcolor="rgba(0,0,0,0)"),
-                              paper_bgcolor="rgba(0,0,0,0)", height=300, margin=dict(l=40, r=40, t=20, b=20),
-                              showlegend=False)
-            st.plotly_chart(fig, use_container_width=True, key=f"radar_{mi['english']}")
         else:
             head += '<span class="bal-badge bal-nodata">暂无数据</span></div>'
             st.markdown(f'<div class="sc-card">{head}<div style="color:#94a3b8;text-align:center;padding:1rem;">⚠️ 该地图尚未被 eloboard 收录</div></div>',
@@ -303,7 +345,7 @@ with tab3:
                           margin=dict(l=10, r=10, t=10, b=10), yaxis=dict(autorange="reversed"), height=420)
         st.plotly_chart(fig, use_container_width=True, key="heatmap")
 
-# ---- Tab4 地图对比 ----
+# ---- Tab4 地图对比（雷达图改为分组柱状图）----
 with tab4:
     opts = [m["english"] for m in season_maps]
     pick = st.multiselect("选择 2~3 张地图对比", opts, default=opts[:2] if len(opts) >= 2 else opts, key="cmp_pick")
@@ -321,13 +363,14 @@ with tab4:
         if cmp_rows:
             st.dataframe(pd.DataFrame(cmp_rows), use_container_width=True, hide_index=True)
             fig = go.Figure()
-            for r in cmp_rows:
-                fig.add_trace(go.Scatterpolar(
-                    r=[r["Z胜率"], r["P胜率"], r["T胜率"], r["Z胜率"]],
-                    theta=["Zerg", "Protoss", "Terran", "Zerg"], fill="toself", name=r["地图"]))
-            fig.update_layout(polar=dict(radialaxis=dict(range=[30, 70], gridcolor="#334155"), bgcolor="rgba(0,0,0,0)"),
-                              paper_bgcolor="rgba(0,0,0,0)", height=420, margin=dict(l=40, r=40, t=20, b=20))
-            st.plotly_chart(fig, use_container_width=True, key="cmp_radar")
+            fig.add_trace(go.Bar(name="Zerg", x=[r["地图"] for r in cmp_rows], y=[r["Z胜率"] for r in cmp_rows], marker_color="#4ade80"))
+            fig.add_trace(go.Bar(name="Protoss", x=[r["地图"] for r in cmp_rows], y=[r["P胜率"] for r in cmp_rows], marker_color="#60a5fa"))
+            fig.add_trace(go.Bar(name="Terran", x=[r["地图"] for r in cmp_rows], y=[r["T胜率"] for r in cmp_rows], marker_color="#f87171"))
+            fig.add_hline(y=50, line_dash="dash", line_color="#64748b", annotation_text="50%")
+            fig.update_layout(barmode="group", template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                              yaxis=dict(range=[30, 70], gridcolor="#1e293b"), xaxis=dict(gridcolor="#1e293b"),
+                              height=400, margin=dict(l=10, r=10, t=10, b=10))
+            st.plotly_chart(fig, use_container_width=True, key="cmp_bar")
     else:
         st.info("请至少选择 2 张地图进行对比")
 
