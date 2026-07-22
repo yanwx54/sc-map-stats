@@ -1,0 +1,34 @@
+name: Daily Scrape
+
+on:
+  schedule:
+    - cron: '0 18 * * *'      # 每天 UTC 18:00（北京时间次日 02:00，韩国数据已更新）
+  workflow_dispatch:           # 允许手动触发
+
+permissions:
+  contents: write
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install requests beautifulsoup4
+
+      - name: Scrape & save snapshot
+        run: |
+          python -c "import scraper; d,s=scraper.scrape(retries=5); print('status:',s); scraper.save_snapshot(d) if d else exit(1)"
+
+      - name: Commit history
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/history.json
+          git diff --cached --quiet || git commit -m "chore: daily snapshot $(date -u +%F)"
+          git push

@@ -1,0 +1,12 @@
+{
+  "season_name": "2026 赛季",
+  "maps": [
+    {"players": 2, "korean": "오디세이",       "english": "Odyssey",        "version": "RE 2.0"},
+    {"players": 2, "korean": "컬러리스 페이트", "english": "Colorless Fate", "version": "1.1"},
+    {"players": 3, "korean": "아이올로스",     "english": "Aiolos",         "version": "1.0b"},
+    {"players": 4, "korean": "녹아웃",         "english": "KnockOut",       "version": "1.4"},
+    {"players": 4, "korean": "백 룸",          "english": "Backrooms",      "version": "1.0"},
+    {"players": 4, "korean": "애티튜드",       "english": "Attitude",       "version": "SE 2.1"},
+    {"players": 4, "korean": "옥타곤",         "english": "Octagon",        "version": "SE 2.0"}
+  ]
+}
