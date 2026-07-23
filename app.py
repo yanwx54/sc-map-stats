@@ -45,9 +45,9 @@ CSS = """
   #MainMenu,footer{visibility:hidden;}
   .block-container{padding-top:1rem;max-width:1200px;}
   .hero{position:relative;height:230px;border-radius:20px;overflow:hidden;margin-bottom:1.2rem;
-        background:linear-gradient(135deg,#1e3a8a,#312e81 50%,#0f172a);border:1px solid #334155;
-        box-shadow:0 20px 50px -20px #000a;}
-  .hero-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;opacity:.88;}
+        background:linear-gradient(135deg,#1e3a8a,#312e81 50%,#0f172a);
+        background-size:cover;background-position:center;background-repeat:no-repeat;
+        border:1px solid #334155;box-shadow:0 20px 50px -20px #000a;}
   .hero-text{position:relative;z-index:2;height:100%;display:flex;flex-direction:column;
         justify-content:center;align-items:center;text-align:center;padding:1rem 2rem;
         background:linear-gradient(180deg,rgba(15,23,42,.10) 0%,rgba(15,23,42,.35) 55%,rgba(15,23,42,.65) 100%);}
@@ -124,7 +124,7 @@ T = LANG[lang]
 season_maps = [m for m in season["maps"] if m["english"] in selected]
 
 # ============================================================
-# 横幅 base64 内联（让图片与文字在同一容器，可叠加+可控高度）
+# 横幅：base64 内联为 CSS 背景图（保证横竖铺满 + 文字叠加）
 # ============================================================
 BANNER_B64 = None
 if os.path.exists("banner.png"):
@@ -134,8 +134,9 @@ if os.path.exists("banner.png"):
 _now = datetime.now().strftime("%Y-%m-%d %H:%M")
 if BANNER_B64:
     hero_html = (
-        '<div class="hero">'
-        f'<img class="hero-bg" src="data:image/png;base64,{BANNER_B64}" alt="banner">'
+        '<div class="hero" style="background-image:url(\''
+        + 'data:image/png;base64,' + BANNER_B64 +
+        '\')">'
         f'<div class="hero-text"><h1>{T["title"]}</h1>'
         f'<p>{T["source"]} {_now} · {season["season_name"]}</p></div></div>'
     )
@@ -167,7 +168,7 @@ elif status == "structure":
     st.stop()
 
 # ============================================================
-# 导出图片辅助函数（英文标签，避免云端中文乱码）
+# 导出图片辅助函数（英文标签，含对战详情矩阵）
 # ============================================================
 def _en_balance(sc):
     if sc is None: return "N/A"
@@ -176,39 +177,84 @@ def _en_balance(sc):
     if sc >= 40: return "Skewed"
     return "Broken"
 
-def build_summary_image(maps_data, season_maps):
-    rows = []
-    for mi in season_maps:
-        _, md = scraper.find_map_data(mi, maps_data)
-        if md and md["total_games"] > 0:
-            z = md["zerg"]["winrate"]; p = md["protoss"]["winrate"]; t = md["terran"]["winrate"]
-            sc = scraper.balance_score(z, p, t, md["total_games"])
-            rows.append([mi["english"], f'{md["total_games"]:,}', f"{z:.1f}", f"{p:.1f}", f"{t:.1f}",
-                         f"{sc}" if sc is not None else "-", _en_balance(sc)])
-    if not rows:
-        return None
-    cols = ["Map", "Games", "Z%", "P%", "T%", "Score", "Balance"]
-    n = len(rows)
-    fig, ax = plt.subplots(figsize=(11, 0.55 * n + 1.6))
-    fig.patch.set_facecolor("#0f172a"); ax.set_facecolor("#0f172a"); ax.axis("off")
-    ax.set_title("SC:BW  ·  Season Map Stats", color="#f1f5f9", fontsize=20, fontweight="bold", pad=26)
-    ax.text(0.5, 1.03, f"Source: eloboard.com  |  {datetime.now().strftime('%Y-%m-%d')}",
-            transform=ax.transAxes, ha="center", color="#94a3b8", fontsize=10)
-    tbl = ax.table(cellText=rows, colLabels=cols, loc="center", cellLoc="center")
-    tbl.auto_set_font_size(False); tbl.set_fontsize(11); tbl.scale(1, 1.7)
+def _style_table(tbl, color_cols):
+    tbl.auto_set_font_size(False); tbl.set_fontsize(11)
     for (r, c), cell in tbl.get_celld().items():
         cell.set_edgecolor("#334155")
         if r == 0:
             cell.set_facecolor("#334155"); cell.get_text().set_color("#e2e8f0"); cell.get_text().set_fontweight("bold")
         else:
             cell.set_facecolor("#1e293b"); cell.get_text().set_color("#e2e8f0")
-            if c in (2, 3, 4):
+            if c in color_cols:
                 try:
-                    v = float(rows[r - 1][c])
+                    v = float(cell.get_text().get_text())
                     cell.get_text().set_color("#4ade80" if v >= 50 else "#fb923c")
                     cell.get_text().set_fontweight("bold")
                 except Exception:
                     pass
+
+def build_summary_image(maps_data, season_maps):
+    # ---- 表1：地图汇总 ----
+    rows1 = []
+    for mi in season_maps:
+        _, md = scraper.find_map_data(mi, maps_data)
+        if md and md["total_games"] > 0:
+            z = md["zerg"]["winrate"]; p = md["protoss"]["winrate"]; t = md["terran"]["winrate"]
+            sc = scraper.balance_score(z, p, t, md["total_games"])
+            rows1.append([mi["english"], f'{md["total_games"]:,}', f"{z:.1f}", f"{p:.1f}", f"{t:.1f}",
+                          f"{sc}" if sc is not None else "-", _en_balance(sc)])
+    if not rows1:
+        return None
+    cols1 = ["Map", "Games", "Z%", "P%", "T%", "Score", "Balance"]
+
+    # ---- 表2：对战详情矩阵（行=对战，列=地图）----
+    mu_keys = ["ZvT", "ZvP", "PvZ", "PvT", "TvZ", "TvP"]
+    mu_cols = []  # (english, matchups_dict)
+    for mi in season_maps:
+        _, md = scraper.find_map_data(mi, maps_data)
+        if md and md["total_games"] > 0 and md.get("matchups"):
+            mu_cols.append((mi["english"], md["matchups"]))
+    rows2, cols2 = [], []
+    if mu_cols:
+        present = [k for k in mu_keys if any(k in d for _, d in mu_cols)]
+        for k in present:
+            row = [k]
+            for en, d in mu_cols:
+                row.append(f"{d[k]['winrate']:.1f}" if k in d else "-")
+            rows2.append(row)
+        cols2 = ["Matchup"] + [en for en, _ in mu_cols]
+
+    # ---- 布局 ----
+    n1, n2 = len(rows1), len(rows2)
+    has_mu = bool(rows2)
+    nrows = 2 if has_mu else 1
+    ratios = [n1 + 1, n2 + 1] if has_mu else [n1 + 1]
+    fig_h = 0.45 * (n1 + 1 + (n2 + 1 if has_mu else 0)) + 2.2
+    fig, axes = plt.subplots(nrows, 1, figsize=(12, max(4.0, fig_h)),
+                             gridspec_kw={'height_ratios': ratios})
+    fig.patch.set_facecolor("#0f172a")
+    if nrows == 1:
+        axes = [axes]
+    fig.suptitle("SC:BW  ·  Season Map Stats", color="#f1f5f9", fontsize=20, fontweight="bold", y=0.985)
+    fig.text(0.5, 0.95, f"Source: eloboard.com  |  {datetime.now().strftime('%Y-%m-%d')}",
+             ha="center", color="#94a3b8", fontsize=10)
+
+    # 表1
+    axes[0].set_facecolor("#0f172a"); axes[0].axis("off")
+    axes[0].text(0.0, 1.04, "Map Summary", transform=axes[0].transAxes,
+                 color="#cbd5e1", fontsize=13, fontweight="bold", va="bottom")
+    t1 = axes[0].table(cellText=rows1, colLabels=cols1, cellLoc="center", bbox=[0, 0, 1, 1])
+    _style_table(t1, color_cols=(2, 3, 4))
+
+    # 表2
+    if has_mu:
+        axes[1].set_facecolor("#0f172a"); axes[1].axis("off")
+        axes[1].text(0.0, 1.06, "Matchup Win Rate by Map", transform=axes[1].transAxes,
+                     color="#cbd5e1", fontsize=13, fontweight="bold", va="bottom")
+        t2 = axes[1].table(cellText=rows2, colLabels=cols2, cellLoc="center", bbox=[0, 0, 1, 1])
+        _style_table(t2, color_cols=tuple(range(1, len(cols2))))
+
+    fig.subplots_adjust(hspace=0.7, top=0.92, bottom=0.02, left=0.02, right=0.98)
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
