@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import os, io
+import os, io, base64
 from datetime import datetime
 import matplotlib
 matplotlib.use("Agg")
@@ -44,14 +44,20 @@ CSS = """
   .stApp{background:radial-gradient(1200px 600px at 50% -10%,#1e3a8a33,transparent),#0f172a;}
   #MainMenu,footer{visibility:hidden;}
   .block-container{padding-top:1rem;max-width:1200px;}
-  .hero{border-radius:20px;overflow:hidden;margin-bottom:1.2rem;
-        background:linear-gradient(135deg,#1e3a8a,#312e81 50%,#0f172a);border:1px solid #334155;}
-  .hero img{width:100%;display:block;opacity:.92;}
-  .hero-text{padding:1.4rem 2rem;text-align:center;}
+  .hero{position:relative;height:230px;border-radius:20px;overflow:hidden;margin-bottom:1.2rem;
+        background:linear-gradient(135deg,#1e3a8a,#312e81 50%,#0f172a);border:1px solid #334155;
+        box-shadow:0 20px 50px -20px #000a;}
+  .hero-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;opacity:.88;}
+  .hero-text{position:relative;z-index:2;height:100%;display:flex;flex-direction:column;
+        justify-content:center;align-items:center;text-align:center;padding:1rem 2rem;
+        background:linear-gradient(180deg,rgba(15,23,42,.10) 0%,rgba(15,23,42,.35) 55%,rgba(15,23,42,.65) 100%);}
   .hero-text h1{margin:0;font-size:2rem;font-weight:800;
         background:linear-gradient(90deg,#4ade80,#60a5fa,#f87171);
-        -webkit-background-clip:text;background-clip:text;color:transparent;}
-  .hero-text p{margin:.4rem 0 0;color:#94a3b8;}
+        -webkit-background-clip:text;background-clip:text;color:transparent;
+        filter:drop-shadow(0 2px 8px rgba(0,0,0,.85));}
+  .hero-text p{margin:.4rem 0 0;color:#f1f5f9;font-size:.95rem;text-shadow:0 1px 5px rgba(0,0,0,.9);}
+  .hero-nobg{height:auto;}
+  .hero-nobg .hero-text{height:auto;padding:2.5rem 2rem;background:none;}
   .metric-row{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.4rem;}
   .metric-card{background:rgba(30,41,59,.6);border:1px solid rgba(148,163,184,.15);
         border-radius:14px;padding:1rem;text-align:center;}
@@ -98,7 +104,7 @@ CSS = """
   .allmap-table tr:hover td{background:rgba(255,255,255,.03);}
   .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:.4rem;}
   .dot.good{background:#4ade80;}.dot.warn{background:#fbbf24;}.dot.mid{background:#fb923c;}.dot.bad{background:#f87171;}.dot.nodata{background:#64748b;}
-  @media(max-width:768px){.metric-row{grid-template-columns:repeat(2,1fr);}.race-grid{grid-template-columns:1fr;}.matchup-list{grid-template-columns:1fr;}}
+  @media(max-width:768px){.hero{height:170px;}.hero-text h1{font-size:1.4rem;}.metric-row{grid-template-columns:repeat(2,1fr);}.race-grid{grid-template-columns:1fr;}.matchup-list{grid-template-columns:1fr;}}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -118,19 +124,27 @@ T = LANG[lang]
 season_maps = [m for m in season["maps"] if m["english"] in selected]
 
 # ============================================================
-# Hero
+# 横幅 base64 内联（让图片与文字在同一容器，可叠加+可控高度）
 # ============================================================
+BANNER_B64 = None
 if os.path.exists("banner.png"):
-    st.markdown('<div class="hero">', unsafe_allow_html=True)
-    st.image("banner.png", use_container_width=True)
-    st.markdown(f'<div class="hero-text"><h1>{T["title"]}</h1>'
-                f'<p>{T["source"]} {datetime.now().strftime("%Y-%m-%d %H:%M")} · {season["season_name"]}</p></div></div>',
-                unsafe_allow_html=True)
+    with open("banner.png", "rb") as _f:
+        BANNER_B64 = base64.b64encode(_f.read()).decode()
+
+_now = datetime.now().strftime("%Y-%m-%d %H:%M")
+if BANNER_B64:
+    hero_html = (
+        '<div class="hero">'
+        f'<img class="hero-bg" src="data:image/png;base64,{BANNER_B64}" alt="banner">'
+        f'<div class="hero-text"><h1>{T["title"]}</h1>'
+        f'<p>{T["source"]} {_now} · {season["season_name"]}</p></div></div>'
+    )
 else:
-    st.markdown(f'<div class="hero"><div class="hero-text" style="padding:2.5rem 2rem;">'
-                f'<h1>{T["title"]}</h1>'
-                f'<p>{T["source"]} {datetime.now().strftime("%Y-%m-%d %H:%M")} · {season["season_name"]}</p></div></div>',
-                unsafe_allow_html=True)
+    hero_html = (
+        '<div class="hero hero-nobg"><div class="hero-text">'
+        f'<h1>{T["title"]}</h1><p>{T["source"]} {_now} · {season["season_name"]}</p></div></div>'
+    )
+st.markdown(hero_html, unsafe_allow_html=True)
 
 # ============================================================
 # 数据获取函数（必须先定义，按钮才能调用）
@@ -246,7 +260,7 @@ RACE = {"zerg": ("Zerg", "zerg"), "protoss": ("Protoss", "protoss"), "terran": (
 
 def wr_cls(wr): return "high" if wr >= 50 else "low"
 
-# ---- Tab1 赛季详情（已移除雷达图）----
+# ---- Tab1 赛季详情（无雷达图）----
 with tab1:
     for mi in season_maps:
         fn, md = scraper.find_map_data(mi, maps_data)
@@ -345,7 +359,7 @@ with tab3:
                           margin=dict(l=10, r=10, t=10, b=10), yaxis=dict(autorange="reversed"), height=420)
         st.plotly_chart(fig, use_container_width=True, key="heatmap")
 
-# ---- Tab4 地图对比（雷达图改为分组柱状图）----
+# ---- Tab4 地图对比（分组柱状图）----
 with tab4:
     opts = [m["english"] for m in season_maps]
     pick = st.multiselect("选择 2~3 张地图对比", opts, default=opts[:2] if len(opts) >= 2 else opts, key="cmp_pick")
